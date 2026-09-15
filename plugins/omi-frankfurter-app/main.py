@@ -16,14 +16,18 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 
-FRANKFURTER_BASE_URL = "https://api.frankfurter.app"
+# api.frankfurter.app now answers every request with a 301 to api.frankfurter.dev/v1;
+# httpx does not follow redirects by default, so the old host broke every tool.
+FRANKFURTER_BASE_URL = "https://api.frankfurter.dev/v1"
 REQUEST_TIMEOUT_SECONDS = 10
 MAX_TARGET_CURRENCIES = 10
 
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(
+        timeout=REQUEST_TIMEOUT_SECONDS, follow_redirects=True
+    ) as client:
         app_instance.state.http_client = client
         yield
 
@@ -117,8 +121,20 @@ def _format_decimal(value: Decimal | float | int) -> str:
 async def _request_json(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     client: httpx.AsyncClient = app.state.http_client
     response = await client.get(f"{FRANKFURTER_BASE_URL}{path}", params=params)
-    response.raise_for_status()
+    if response.is_error:
+        raise ValueError(_api_error_message(response))
     return response.json()
+
+
+def _api_error_message(response: httpx.Response) -> str:
+    """Prefer Frankfurter's own message (e.g. 'bad currency pair') over the raw status line."""
+    try:
+        message = response.json().get("message")
+    except (ValueError, AttributeError):
+        message = None
+    if isinstance(message, str) and message.strip():
+        return f"Frankfurter API error: {message.strip()}"
+    return f"Frankfurter API returned HTTP {response.status_code}"
 
 
 @app.exception_handler(RequestValidationError)
@@ -263,5 +279,5 @@ async def list_supported_currencies() -> ChatToolResponse:
         for code, name in sorted(currencies.items()):
             lines.append(f"- {code}: {name}")
         return ChatToolResponse(result="\n".join(lines))
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         return ChatToolResponse(error=f"currency list request failed: {exc}")
