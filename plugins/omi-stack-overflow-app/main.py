@@ -123,12 +123,15 @@ def _clean_text(value: Optional[str]) -> str:
     if not value:
         return ""
 
-    text = unescape(value)
-    text = re.sub(r"<pre[^>]*>|</pre>", "\n", text, flags=re.IGNORECASE)
+    # Strip markup first, then decode entities. Decoding first turned escaped text
+    # such as ``List&lt;String&gt;`` into ``List<String>``, which the tag stripper
+    # below then deleted, so generics, HTML and XML snippets lost their contents.
+    text = re.sub(r"<pre[^>]*>|</pre>", "\n", value, flags=re.IGNORECASE)
     text = re.sub(r"<code[^>]*>|</code>", "`", text, flags=re.IGNORECASE)
     text = re.sub(r"</?(p|blockquote|ul|ol|li|h[1-6])[^>]*>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", "", text)
+    text = unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
